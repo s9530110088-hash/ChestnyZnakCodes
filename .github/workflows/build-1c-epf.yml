@@ -1,47 +1,43 @@
-name: Build 1C EPF
+name: Build diagnostic 1C EPF
 
 on:
   workflow_dispatch:
 
 jobs:
   build:
-    runs-on: [self-hosted, windows]
+    runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - name: Check 1C Designer
-        shell: powershell
+      - name: Checkout EPF Factory
+        uses: actions/checkout@v4
+        with:
+          repository: Pradushkoai/1c-ai-dev-env
+          path: epf-factory
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install EPF Factory
         run: |
-          $candidates = @(
-            "$env:ProgramFiles\1cv8\8.5.1.1343\bin\1cv8.exe",
-            "$env:ProgramFiles\1cv8\8.3.27.1688\bin\1cv8.exe",
-            "$env:ProgramFiles(x86)\1cv8\8.5.1.1343\bin\1cv8.exe"
-          )
-          $exe = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
-          if (-not $exe) {
-            throw "1cv8.exe не найден. Нужен Windows self-hosted runner с установленной 1С."
-          }
-          "ONEC=$exe" | Out-File -FilePath $env:GITHUB_ENV -Append
+          python -m pip install --upgrade pip
+          python -m pip install -e ./epf-factory
 
-      - name: Build EPF
-        shell: powershell
+      - name: Build diagnostic EPF
         run: |
-          New-Item -ItemType Directory -Force build | Out-Null
-          Copy-Item "1C\ЭкспортКодовЧестныйЗНАК_8_3.bsl" "build\"
-          Copy-Item "1C\ЭкспортКодовЧестныйЗНАК_Форма.bsl" "build\"
-          Copy-Item "1C\EPF_Структура_ЭкспортКодов_ЧестныйЗНАК.md" "build\"
-          @"
-          Для получения настоящего EPF:
-          1. Откройте Конфигуратор 1С 8.5.
-          2. Создайте внешнюю обработку.
-          3. Добавьте управляемую форму.
-          4. Создайте реквизиты формы из комментариев исходника.
-          5. Вставьте модуль формы и модуль объекта.
-          6. Сохраните как EPF.
-          "@ | Out-File "build\BUILD_NOTES.txt" -Encoding UTF8
+          mkdir -p build
+          1c-ai epf-factory create \
+            --name "ДиагностикаПулаКодовСУЗ" \
+            --synonym "Диагностика пула кодов СУЗ" \
+            --bsl "1C/ДиагностикаПулаКодовСУЗ_EPF.bsl" \
+            --output "build/ДиагностикаПулаКодовСУЗ.epf" \
+            --skip-bsl-validation
 
-      - name: Upload sources
+      - name: Upload EPF
         uses: actions/upload-artifact@v4
         with:
-          name: EPF-source
-          path: build/
+          name: ДиагностикаПулаКодовСУЗ
+          path: build/ДиагностикаПулаКодовСУЗ.epf
