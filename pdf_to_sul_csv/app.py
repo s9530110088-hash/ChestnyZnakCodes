@@ -18,7 +18,7 @@ except ImportError:
     zxingcpp = None
 
 try:
-    from PIL import Image
+    from PIL import Image, ImageOps, ImageFilter
 except ImportError:
     Image = None
 
@@ -52,17 +52,37 @@ def render_page(page, dpi=300):
 
 
 def decode_image(img):
+    """Decode DataMatrix from several robust image variants."""
     if zxingcpp is None:
         raise RuntimeError("Не установлен zxing-cpp.")
-    results = zxingcpp.read_barcodes(img)
+
+    variants = [img]
+    gray = ImageOps.grayscale(img)
+    variants.append(gray)
+    variants.append(ImageOps.autocontrast(gray))
+    variants.append(gray.filter(ImageFilter.SHARPEN))
+    try:
+        variants.append(gray.point(lambda p: 255 if p > 170 else 0))
+    except Exception:
+        pass
+
     out = []
-    for r in results:
+    seen = set()
+    for variant in variants:
         try:
-            text = r.text
+            results = zxingcpp.read_barcodes(variant)
         except Exception:
             continue
-        if text:
-            out.append(clean_decoded(text))
+        for r in results:
+            try:
+                text = r.text
+            except Exception:
+                continue
+            if text:
+                text = clean_decoded(text)
+                if text and text not in seen:
+                    seen.add(text)
+                    out.append(text)
     return out
 
 
@@ -78,14 +98,14 @@ def decode_pdf(path, progress_cb=None):
     try:
         total = len(doc)
         for i, page in enumerate(doc):
-            # 300 dpi is a good compromise for printed DataMatrix.
-            img = render_page(page, 300)
-            decoded = decode_image(img)
-
-            # If nothing was found, retry at 450 dpi for small codes.
-            if not decoded:
-                img = render_page(page, 450)
+            # Try progressively higher DPI. This is important for small
+            # graphical DataMatrix codes embedded in PDF pages.
+            decoded = []
+            for dpi in (300, 450, 600):
+                img = render_page(page, dpi)
                 decoded = decode_image(img)
+                if decoded:
+                    break
 
             for code in decoded:
                 if looks_like_marking_code(code):
@@ -247,7 +267,14 @@ class App(tk.Tk):
         self.tree.pack(side="left", fill="both", expand=True)
         yscroll.pack(side="right", fill="y")
 
-        ttk.Label(root, textvariable=self.status, style="Sub.TLabel").pack(anchor="w", pady=(10, 0))
+        # Dedicated result line remains visible when the window is resized.
+        result_bar = ttk.Frame(root)
+        result_bar.pack(fill="x", pady=(10, 0))
+        ttk.Label(result_bar, text="Уникальных кодов:", style="Sub.TLabel").pack(side="left")
+        ttk.Label(result_bar, textvariable=self.count_var, style="Stat.TLabel").pack(side="left", padx=(6, 18))
+        ttk.Label(result_bar, textvariable=self.status, style="Sub.TLabel").pack(
+            side="left", fill="x", expand=True
+        )
 
     def select_pdf(self):
         files = filedialog.askopenfilenames(
