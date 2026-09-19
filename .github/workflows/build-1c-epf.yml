@@ -1,7 +1,11 @@
-name: Build real 1C diagnostic EPF
+name: Build diagnostic 1C EPF
 
 on:
   workflow_dispatch:
+  push:
+    paths:
+      - "1C/**"
+      - ".github/workflows/build-1c-epf.yml"
 
 jobs:
   build:
@@ -221,5 +225,5 @@ jobs:
       - name: Upload EPF
         uses: actions/upload-artifact@v4
         with:
-          name: ДиагностикаПулаКодовСУЗ_REAL
+          name: ДиагностикаПулаКодовСУЗ_EPФ
           path: build/ДиагностикаПулаКодовСУЗ.epf
