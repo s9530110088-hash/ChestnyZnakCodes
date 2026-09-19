@@ -1,0 +1,47 @@
+name: Build 1C EPF
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: [self-hosted, windows]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check 1C Designer
+        shell: powershell
+        run: |
+          $candidates = @(
+            "$env:ProgramFiles\1cv8\8.5.1.1343\bin\1cv8.exe",
+            "$env:ProgramFiles\1cv8\8.3.27.1688\bin\1cv8.exe",
+            "$env:ProgramFiles(x86)\1cv8\8.5.1.1343\bin\1cv8.exe"
+          )
+          $exe = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $exe) {
+            throw "1cv8.exe не найден. Нужен Windows self-hosted runner с установленной 1С."
+          }
+          "ONEC=$exe" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Build EPF
+        shell: powershell
+        run: |
+          New-Item -ItemType Directory -Force build | Out-Null
+          Copy-Item "1C\ЭкспортКодовЧестныйЗНАК_8_3.bsl" "build\"
+          Copy-Item "1C\ЭкспортКодовЧестныйЗНАК_Форма.bsl" "build\"
+          Copy-Item "1C\EPF_Структура_ЭкспортКодов_ЧестныйЗНАК.md" "build\"
+          @"
+          Для получения настоящего EPF:
+          1. Откройте Конфигуратор 1С 8.5.
+          2. Создайте внешнюю обработку.
+          3. Добавьте управляемую форму.
+          4. Создайте реквизиты формы из комментариев исходника.
+          5. Вставьте модуль формы и модуль объекта.
+          6. Сохраните как EPF.
+          "@ | Out-File "build\BUILD_NOTES.txt" -Encoding UTF8
+
+      - name: Upload sources
+        uses: actions/upload-artifact@v4
+        with:
+          name: EPF-source
+          path: build/
