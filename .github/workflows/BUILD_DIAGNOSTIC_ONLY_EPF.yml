@@ -1,0 +1,132 @@
+name: "1C — ДИАГНОСТИКА — СБОРКА EPF"
+
+on:
+  workflow_dispatch:
+
+jobs:
+  diagnostic-epf:
+    name: "BUILD ДиагностикаПулаКодовСУЗ.epf"
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Checkout EPF Factory
+        uses: actions/checkout@v4
+        with:
+          repository: Pradushkoai/1c-ai-dev-env
+          path: epf-factory
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install EPF Factory
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ./epf-factory
+
+      - name: Build ONLY diagnostic EPF
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import sys
+
+          root = Path("epf-factory")
+          sys.path.insert(0, str(root))
+
+          from src.services.code_generator import generate_processing
+          from src.services.epf_builder import build_epf
+
+          out = Path("build/ДиагностикаПулаКодовСУЗ")
+          out.mkdir(parents=True, exist_ok=True)
+
+          generate_processing(
+              name="ДиагностикаПулаКодовСУЗ",
+              synonym="Диагностика пула кодов СУЗ",
+              output_dir=str(out),
+              description="Безопасная диагностика метаданных 1С. Только чтение.",
+          )
+
+          object_module = r'''#Область ПрограммныйИнтерфейс
+Функция СведенияОВнешнейОбработке() Экспорт
+    РегистрационныеДанные = Новый Структура;
+    РегистрационныеДанные.Вставить("Наименование", "Диагностика пула кодов СУЗ");
+    РегистрационныеДанные.Вставить("БезопасныйРежим", Истина);
+    РегистрационныеДанные.Вставить("Версия", "1.0");
+    РегистрационныеДанные.Вставить("Вид", "ДополнительнаяОбработка");
+    Возврат РегистрационныеДанные;
+КонецФункции
+#КонецОбласти
+'''
+          (out / "Ext" / "Module.bsl").write_text(object_module, encoding="utf-8")
+
+          form_module = (Path("1C") / "ДиагностикаПулаКодовСУЗ_EPF.bsl").read_text(encoding="utf-8")
+          form_path = out / "Forms" / "Форма" / "Ext" / "Form" / "Module.bsl"
+          form_path.write_text(form_module, encoding="utf-8")
+
+          builder = root / "src/services/epf_builder.py"
+          s = builder.read_text(encoding="utf-8")
+
+          old = '''    # 4c. Module of object (если есть) — UUID.0 (root UUID + .0)
+    if module_content:
+        module_container = _build_module_container(module_content)
+        # Вставляем ПЕРЕД copyinfo (после root metadata и form)
+        # Но в реальном EPF порядок: root_uuid, form_uuid, form_uuid.0, copyinfo, root, version, versions
+        # Модуль объекта: root_uuid.0 — но только если есть
+        # Пока пропускаем — в исходной обработке модуль объекта пустой
+'''
+          new = '''    # 4c. Module of object — root UUID.0
+    if module_content:
+        module_container = _build_module_container(module_content)
+        files.append((f"{root_uuid}.0", module_container))
+'''
+          if old in s:
+              s = s.replace(old, new)
+
+          old2 = '''            form_module_content = b""
+            if form_module_path.exists():
+                form_module_content = module_path.read_bytes()
+'''
+          new2 = '''            form_module_content = b""
+            if form_module_path.exists():
+                form_module_content = form_module_path.read_bytes()
+'''
+          if old2 in s:
+              s = s.replace(old2, new2)
+
+          builder.write_text(s, encoding="utf-8")
+
+          result = build_epf(
+              source_dir=out,
+              output_path="build/ДиагностикаПулаКодовСУЗ.epf",
+              object_name="ДиагностикаПулаКодовСУЗ",
+              object_type="DataProcessor",
+          )
+          print(result)
+          PY
+
+      - name: VERIFY — file MUST be EPF
+        run: |
+          test -f "build/ДиагностикаПулаКодовСУЗ.epf"
+          file "build/ДиагностикаПулаКодовСУЗ.epf"
+          python - <<'PY'
+          from pathlib import Path
+          p = Path("build/ДиагностикаПулаКодовСУЗ.epf")
+          data = p.read_bytes()
+          print("FILE:", p)
+          print("SIZE:", len(data))
+          print("SIGNATURE:", data[:4].hex())
+          if data[:4] != bytes.fromhex("ffffff7f"):
+              raise SystemExit("ERROR: output is NOT a 1C EPF")
+          print("OK: output is a 1C EPF")
+          PY
+
+      - name: Upload ONLY EPF
+        uses: actions/upload-artifact@v4
+        with:
+          name: "1C-ДИАГНОСТИКА-EPF-ТОЛЬКО"
+          path: "build/ДиагностикаПулаКодовСУЗ.epf"
+          if-no-files-found: error
