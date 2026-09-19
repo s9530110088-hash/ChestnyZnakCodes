@@ -1,0 +1,43 @@
+name: Build 1C diagnostic EPF
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Checkout EPF Factory
+        uses: actions/checkout@v4
+        with:
+          repository: Pradushkoai/1c-ai-dev-env
+          path: epf-factory
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install EPF Factory
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ./epf-factory
+
+      - name: Build EPF
+        run: |
+          mkdir -p build
+          1c-ai epf-factory create \
+            --name "ДиагностикаПулаКодовСУЗ" \
+            --synonym "Диагностика пула кодов СУЗ" \
+            --bsl "1C/ДиагностикаПулаКодовСУЗ_EPF.bsl" \
+            --output "build/ДиагностикаПулаКодовСУЗ.epf" \
+            --skip-bsl-validation
+
+      - name: Upload EPF
+        uses: actions/upload-artifact@v4
+        with:
+          name: ДиагностикаПулаКодовСУЗ
+          path: build/ДиагностикаПулаКодовСУЗ.epf
