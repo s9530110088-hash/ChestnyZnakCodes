@@ -1,15 +1,14 @@
-name: "1C — ДИАГНОСТИКА — СБОРКА EPF"
+name: 1C Diagnostic EPF Build
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
   workflow_dispatch:
 
 jobs:
-  diagnostic-epf:
-    name: "BUILD ДиагностикаПулаКодовСУЗ.epf"
+  build:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -25,20 +24,20 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install EPF Factory
+      - name: Install factory
         run: |
           python -m pip install --upgrade pip
           python -m pip install -e ./epf-factory
 
-      - name: Build ONLY diagnostic EPF
+      - name: Build diagnostic EPF
+        shell: bash
         run: |
+          set -e
           python - <<'PY'
           from pathlib import Path
           import sys
-
           root = Path("epf-factory")
           sys.path.insert(0, str(root))
-
           from src.services.code_generator import generate_processing
           from src.services.epf_builder import build_epf
 
@@ -52,53 +51,38 @@ jobs:
               description="Безопасная диагностика метаданных 1С. Только чтение.",
           )
 
-          object_module = r'''#Область ПрограммныйИнтерфейс
-Функция СведенияОВнешнейОбработке() Экспорт
-    РегистрационныеДанные = Новый Структура;
-    РегистрационныеДанные.Вставить("Наименование", "Диагностика пула кодов СУЗ");
-    РегистрационныеДанные.Вставить("БезопасныйРежим", Истина);
-    РегистрационныеДанные.Вставить("Версия", "1.0");
-    РегистрационныеДанные.Вставить("Вид", "ДополнительнаяОбработка");
-    Возврат РегистрационныеДанные;
-КонецФункции
-#КонецОбласти
-'''
-          (out / "Ext" / "Module.bsl").write_text(object_module, encoding="utf-8")
+          obj = '''#Область ПрограммныйИнтерфейс
+          Функция СведенияОВнешнейОбработке() Экспорт
+              Данные = Новый Структура;
+              Данные.Вставить("Наименование", "Диагностика пула кодов СУЗ");
+              Данные.Вставить("БезопасныйРежим", Истина);
+              Данные.Вставить("Версия", "1.0");
+              Данные.Вставить("Вид", "ДополнительнаяОбработка");
+              Возврат Данные;
+          КонецФункции
+          #КонецОбласти
+          '''
+          (out / "Ext" / "Module.bsl").write_text(obj, encoding="utf-8")
 
-          form_module = (Path("1C") / "ДиагностикаПулаКодовСУЗ_EPF.bsl").read_text(encoding="utf-8")
-          form_path = out / "Forms" / "Форма" / "Ext" / "Form" / "Module.bsl"
-          form_path.write_text(form_module, encoding="utf-8")
+          src = Path("1C/ДиагностикаПулаКодовСУЗ_EPF.bsl")
+          form = out / "Forms/Форма/Ext/Form/Module.bsl"
+          form.parent.mkdir(parents=True, exist_ok=True)
+          form.write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
 
           builder = root / "src/services/epf_builder.py"
           s = builder.read_text(encoding="utf-8")
 
-          old = '''    # 4c. Module of object (если есть) — UUID.0 (root UUID + .0)
-    if module_content:
-        module_container = _build_module_container(module_content)
-        # Вставляем ПЕРЕД copyinfo (после root metadata и form)
-        # Но в реальном EPF порядок: root_uuid, form_uuid, form_uuid.0, copyinfo, root, version, versions
-        # Модуль объекта: root_uuid.0 — но только если есть
-        # Пока пропускаем — в исходной обработке модуль объекта пустой
-'''
-          new = '''    # 4c. Module of object — root UUID.0
-    if module_content:
-        module_container = _build_module_container(module_content)
-        files.append((f"{root_uuid}.0", module_container))
-'''
-          if old in s:
-              s = s.replace(old, new)
+          if 'files.append((f"{root_uuid}.0", module_container))' not in s:
+              s = s.replace(
+                  'module_container = _build_module_container(module_content)',
+                  'module_container = _build_module_container(module_content)\n        files.append((f"{root_uuid}.0", module_container))',
+                  1
+              )
 
-          old2 = '''            form_module_content = b""
-            if form_module_path.exists():
-                form_module_content = module_path.read_bytes()
-'''
-          new2 = '''            form_module_content = b""
-            if form_module_path.exists():
-                form_module_content = form_module_path.read_bytes()
-'''
-          if old2 in s:
-              s = s.replace(old2, new2)
-
+          s = s.replace(
+              'form_module_content = module_path.read_bytes()',
+              'form_module_content = form_module_path.read_bytes()'
+          )
           builder.write_text(s, encoding="utf-8")
 
           result = build_epf(
@@ -110,25 +94,21 @@ jobs:
           print(result)
           PY
 
-      - name: VERIFY — file MUST be EPF
+      - name: Verify EPF
         run: |
           test -f "build/ДиагностикаПулаКодовСУЗ.epf"
-          file "build/ДиагностикаПулаКодовСУЗ.epf"
           python - <<'PY'
           from pathlib import Path
-          p = Path("build/ДиагностикаПулаКодовСУЗ.epf")
-          data = p.read_bytes()
-          print("FILE:", p)
-          print("SIZE:", len(data))
-          print("SIGNATURE:", data[:4].hex())
-          if data[:4] != bytes.fromhex("ffffff7f"):
-              raise SystemExit("ERROR: output is NOT a 1C EPF")
-          print("OK: output is a 1C EPF")
+          p=Path("build/ДиагностикаПулаКодовСУЗ.epf")
+          d=p.read_bytes()
+          print("SIZE:", len(d))
+          print("SIGNATURE:", d[:4].hex())
+          assert d[:4] == bytes.fromhex("ffffff7f"), "NOT A 1C EPF"
           PY
 
-      - name: Upload ONLY EPF
+      - name: Upload EPF
         uses: actions/upload-artifact@v4
         with:
-          name: "1C-ДИАГНОСТИКА-EPF-ТОЛЬКО"
-          path: "build/ДиагностикаПулаКодовСУЗ.epf"
+          name: 1C-ДИАГНОСТИКА-EPF
+          path: build/ДиагностикаПулаКодовСУЗ.epf
           if-no-files-found: error
